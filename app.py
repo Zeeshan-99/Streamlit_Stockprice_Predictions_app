@@ -35,10 +35,12 @@ st.image("https://img.freepik.com/free-vector/gradient-stock-market-concept_23-2
 # Sidebar
 st.sidebar.header('Select the parameters from below')
 
-start_date = st.sidebar.date_input('Start date', date(2020, 1, 1))
-end_date = st.sidebar.date_input('End date', date(2020, 12, 31))
+start_date = st.sidebar.date_input('Start date', date(2021, 1, 1))
+# end_date = st.sidebar.date_input('End date', date(2020, 12, 31))
+end_date = st.sidebar.date_input('End date', date.today())
+
 # Add ticker symbol list
-ticker_list = ["AAPL", "MSFT", "GOOG", "GOOGL", "META", "TSLA", "NVDA", "ADBE", "PYPL", "INTC", "CMCSA", "NFLX", "PEP"]
+ticker_list = ["BTC-USD","ETH-USD","AAPL", "MSFT", "GOOG", "GOOGL", "META", "TSLA", "NVDA", "ADBE", "PYPL", "INTC", "CMCSA", "NFLX", "PEP"]
 ticker = st.sidebar.selectbox('Select the company', ticker_list)
 
 # Fetch data from user inputs using yfinance library
@@ -102,7 +104,7 @@ if selected_model == 'SARIMA':
 
     # Forecasting using SARIMA
     st.write("<p style='color:green; font-size: 50px; font-weight: bold;'>Forecasting the data with SARIMA</p>",
-             unsafe_allow_html=True)
+            unsafe_allow_html=True)
 
     forecast_period = st.number_input('Select the number of days to forecast', 1, 365, 10)
     # Predict the future values
