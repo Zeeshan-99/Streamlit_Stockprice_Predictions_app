@@ -1,4 +1,5 @@
 # Import libraries
+from tensorflow.keras.optimizers import Adam
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -51,16 +52,20 @@ data.reset_index(drop=True, inplace=True)
 st.write('Data from', start_date, 'to', end_date)
 st.write(data)
 
+
+
 # Plot the data
 st.header('Data Visualization')
 st.subheader('Plot of the data')
+# Add a select box to choose the column for forecasting
+column_1 = st.selectbox('Choose variable to see the trends', data.columns[1:])
+
 st.write("**Note:** Select your specific date range on the sidebar, or zoom in on the plot and select your specific column")
-fig = px.line(data, x='Date', y=data.columns, title='Closing price of the stock', width=1000, height=600)
+fig = px.line(data, x='Date', y=data[column_1], title=column_1 + ' price of the stock', width=1000, height=600)
 st.plotly_chart(fig)
 
 # Add a select box to choose the column for forecasting
 column = st.selectbox('Select the column to be used for forecasting', data.columns[1:])
-
 # Subsetting the data
 data = data[['Date', column]]
 st.write("Selected Data")
@@ -132,7 +137,6 @@ if selected_model == 'SARIMA':
     # Display the plot
     st.plotly_chart(fig)
 
-
 elif selected_model == 'Random Forest':
     # Random Forest Model
     st.header('Random Forest Regression')
@@ -174,70 +178,100 @@ elif selected_model == 'Random Forest':
 elif selected_model == 'LSTM':
     # LSTM Model
     st.header('Long Short-Term Memory (LSTM)')
-
+    # Convert 'Date' column to datetime
+    data['Date'] = pd.to_datetime(data['Date'])
+    # Sort the data by date
+    data = data.sort_values(by='Date')
+    df= data.copy() 
+    
+    #Extract the column values
+    data= data[column].values.reshape(-1,1)
+    
     # Scale the data
     scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(data[column].values.reshape(-1, 1))
+    scaled_data = scaler.fit_transform(data)
 
     # Split the data into training and testing sets
     train_size = int(len(scaled_data) * 0.8)
     train_data, test_data = scaled_data[:train_size], scaled_data[train_size:]
+    
+    # Function to create dataset with lookback
+    def create_dataset(dataset, look_back=1):
+        X, Y = [], []
+        for i in range(len(dataset) - look_back):
+            X.append(dataset[i:(i + look_back), 0])
+            Y.append(dataset[i + look_back, 0])
+        return np.array(X), np.array(Y)
 
-    # Create sequences for LSTM model
-    def create_sequences(dataset, seq_length):
-        X, y = [], []
-        for i in range(len(dataset) - seq_length):
-            X.append(dataset[i:i + seq_length, 0])
-            y.append(dataset[i + seq_length, 0])
-        return np.array(X), np.array(y)
 
-    seq_length = st.slider('Select the sequence length', 1, 30, 10)
+    # Create train and test datasets with lookback
+    look_back = st.slider('Select the sequence length look_back', 5, 100, 5)
 
-    train_X, train_y = create_sequences(train_data, seq_length)
-    test_X, test_y = create_sequences(test_data, seq_length)
+    X_train, y_train = create_dataset(train_data, look_back)
+    X_test, y_test = create_dataset(test_data, look_back)
 
-    train_X = np.reshape(train_X, (train_X.shape[0], train_X.shape[1], 1))
-    test_X = np.reshape(test_X, (test_X.shape[0], test_X.shape[1], 1))
+   # Reshape input data to [samples, time steps, features]
+    X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
+    X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
 
     # Build the LSTM model
-    lstm_model = Sequential()
-    lstm_model.add(LSTM(units=50, return_sequences=True, input_shape=(train_X.shape[1], 1)))
-    lstm_model.add(LSTM(units=50))
-    lstm_model.add(Dense(units=1))
+    model = Sequential()
+    model.add(LSTM(units=50, return_sequences=True, input_shape=(X_train.shape[1], 1)))
+    model.add(LSTM(units=50, return_sequences=False))
+    model.add(Dense(units=1))
+    model.compile(optimizer='adam', loss='mean_squared_error')
 
-    lstm_model.compile(optimizer='adam', loss='mean_squared_error')
-    lstm_model.fit(train_X, train_y, epochs=10, batch_size=16)
+    # Train the model
+    model.fit(X_train, y_train, batch_size=64, epochs=100)
 
-    # Predict the future values
-    train_predictions = lstm_model.predict(train_X)
-    test_predictions = lstm_model.predict(test_X)
-    train_predictions = scaler.inverse_transform(train_predictions)
+    # Define the number of days to predict
+    days_to_predict = st.slider('Select days to forecast', 10, 1000, 5)
+    
+    # Make predictions for the test dataset
+    test_predictions = model.predict(X_test)
     test_predictions = scaler.inverse_transform(test_predictions)
 
-    # Calculate mean squared error
-    train_mse = mean_squared_error(train_data[seq_length:], train_predictions)
-    train_rmse = np.sqrt(train_mse)
-    test_mse = mean_squared_error(test_data[seq_length:], test_predictions)
-    test_rmse = np.sqrt(test_mse)
+    # Make predictions for the specified additional number of days
+    predictions = []
+    current_batch = X_test[-1]
 
-    st.write(f"Train RMSE: {train_rmse}")
-    st.write(f"Test RMSE: {test_rmse}")
+    for i in range(days_to_predict):
+        current_pred = model.predict(current_batch.reshape(1, look_back, 1))
+        predictions.append(current_pred[0][0])  # Extract the scalar value from the prediction
+        current_batch = np.append(current_batch[1:], current_pred[0][0])  # Append scalar prediction to current batch
 
-    # Combine training and testing data for plotting
-    train_dates = data['Date'][:train_size + seq_length]
-    test_dates = data['Date'][train_size + seq_length:]
-    combined_dates = pd.concat([train_dates, test_dates])
-    combined_predictions = np.concatenate([train_predictions, test_predictions])
+    extended_predictions = scaler.inverse_transform(np.array(predictions).reshape(-1, 1))
 
-    # Plot the data
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=combined_dates, y=data[column], mode='lines', name='Actual', line=dict(color='blue')))
-    fig.add_trace(go.Scatter(x=test_dates, y=combined_predictions, mode='lines', name='Predicted',
-                             line=dict(color='red')))
-    fig.update_layout(title='Actual vs Predicted (LSTM)', xaxis_title='Date', yaxis_title='Price',
-                      width=1000, height=400)
-    st.plotly_chart(fig)
+    def plot_stock_prediction(df, train_size, data, test_predictions, extended_predictions, days_to_predict, look_back):
+        fig = go.Figure()
+        # Plot training data
+        fig.add_trace(go.Scatter(x=df['Date'][:train_size], y=data[:train_size].flatten(),
+                            mode='lines', name='Training Data', line=dict(color='blue')))
 
+        # Plot testing data
+        fig.add_trace(go.Scatter(x=df['Date'][train_size+look_back:], y=data[train_size+look_back:].flatten(),
+                            mode='lines', name='Testing Data', line=dict(color='green')))
+
+        # Plot predicted data for test dataset
+        fig.add_trace(go.Scatter(x=df['Date'][train_size+look_back:train_size+look_back+len(test_predictions)],
+                            y=test_predictions.flatten(), mode='lines',
+                            name='Predicted Data (Test Dataset)', line=dict(color='orange')))
+
+        # Plot extended predicted data
+        fig.add_trace(go.Scatter(x=pd.date_range(start=df['Date'].iloc[-1], periods=days_to_predict+1)[1:],
+                            y=extended_predictions.flatten(),
+                            mode='lines', name=f'Extended Predicted Data ({days_to_predict} days)', line=dict(color='red')))
+
+        fig.update_layout(title='Stock Price Prediction using LSTM',
+                        xaxis_title='Date',
+                        yaxis_title='Stock Price', width=1000, height=400)
+        # fig.show()
+        return fig
+
+    # Call the function with appropriate arguments
+    fig1= plot_stock_prediction(df, train_size, data, test_predictions, extended_predictions, days_to_predict, look_back)
+    st.plotly_chart(fig1)
+    
 elif selected_model == 'Prophet':
     # Prophet Model
     st.header('Facebook Prophet')
